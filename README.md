@@ -12,6 +12,17 @@ MODEL_PATH = os.getenv(
     "models/Qwen3-4B-Q4_K_M.gguf"
 )
 
+By default model run on CPU, if you have Nvidia RTX GPU you can use it as changing in main.py
+
+# Number of GPU layers.
+# 0  = CPU only
+# -1 = use as many GPU layers as possible
+# Start with 0 if you are unsure.
+
+GPU_LAYERS = int(
+    os.getenv("MY_ASSISTANT_GPU_LAYERS", "0")
+)
+
 
 Future updates:
 
