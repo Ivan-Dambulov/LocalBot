@@ -2,7 +2,7 @@
 
 A privacy-first desktop chat app that runs large language models **entirely on your machine**.
 
-Built with Python, PySide6, and llama.cpp. No cloud API for chat. No account. Conversations stay in a local SQLite database.
+Built with Python and llama.cpp. No cloud API for chat. No account. Conversations stay in a local SQLite database.
 
 ---
 
