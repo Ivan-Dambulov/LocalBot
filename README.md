@@ -22,7 +22,7 @@ Local AI Assistant is a small desktop client for **GGUF** models. You chat in a 
 - Streaming responses token-by-token  
 - Multiple conversations with automatic titles from the first message  
 - History stored locally in SQLite (`data/conversations.db`)  
-- Clear conversations by scope: **today**, **last 7 days**, or **all**  
+- Clear conversations 
 - Empty chats are not saved until you send a message  
 
 ### Hardware awareness
