@@ -23,7 +23,8 @@ from PySide6.QtWidgets import (
 from assistant.engine import AssistantEngine
 from ui.settings_dialog import SettingsDialog
 from ui.styles import apply_macos_theme
-
+from llm.llama_runtime import LlamaRuntime
+import os
 
 class ChatWorker(QThread):
 
@@ -326,17 +327,38 @@ class MainWindow(QWidget):
             self.gpu_layers = dialog.gpu_layers
             self.context_size = dialog.context_size
             self.models_dir = dialog.models_dir
-            self._update_status_bar_info()
 
-            QMessageBox.information(
-                self,
-                "Restart required",
-                (
-                    "Settings were saved to data/settings.ini.\n\n"
-                    "Restart the application for the new model / "
-                    "GPU layers / context size to take effect."
-                ),
-            )
+            # Load / reload model immediately
+            if self.model_path and os.path.isfile(self.model_path):
+                self.status_label.setText("Loading model…")
+                try:
+                    llm = LlamaRuntime(
+                        model_path=self.model_path,
+                        context_size=self.context_size,
+                        gpu_layers=self.gpu_layers,
+                    )
+                    self.engine.set_llm(llm)
+                    QMessageBox.information(
+                        self,
+                        "Model loaded",
+                        f"Loaded:\n{self.model_path}",
+                    )
+                except Exception as exc:
+                    self.engine.set_llm(None)
+                    QMessageBox.critical(
+                        self,
+                        "Could not load model",
+                        str(exc),
+                    )
+            else:
+                self.engine.set_llm(None)
+                QMessageBox.information(
+                    self,
+                    "No model",
+                    "No valid GGUF selected. Download or choose one in Model Manager.",
+                )
+
+            self._update_status_bar_info()
 
     def _update_status_bar_info(self):
         name = (

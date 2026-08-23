@@ -6,19 +6,16 @@ class AssistantEngine:
     def __init__(self, llm, store):
         self.llm = llm
         self.store = store
-        # None until the user actually sends a message
         self.conversation_id: Optional[int] = None
 
-    # -----------------------------------------------------
-    # Conversations
-    # -----------------------------------------------------
+    def set_llm(self, llm) -> None:
+        """Replace the runtime model (e.g. after Model Manager Apply)."""
+        self.llm = llm
 
     def new_conversation(self) -> None:
-        """Start a blank draft — no DB row until the first message."""
         self.conversation_id = None
 
     def ensure_conversation(self) -> int:
-        """Create a DB conversation on demand (first user message)."""
         if self.conversation_id is None:
             self.conversation_id = self.store.create_conversation()
         return self.conversation_id
@@ -34,10 +31,6 @@ class AssistantEngine:
         return self.store.get_conversations()
 
     def clear_conversations(self, scope: str) -> int:
-        """
-        scope: 'today' | 'last_week' | 'all'
-        Does not create a replacement empty conversation.
-        """
         deleted = self.store.clear_conversations(scope)
         self.conversation_id = None
         return deleted
@@ -47,17 +40,19 @@ class AssistantEngine:
         if self.conversation_id == conversation_id:
             self.conversation_id = None
 
-    # -----------------------------------------------------
-    # Chat
-    # -----------------------------------------------------
-
     def send(self, text: str) -> Generator[str, None, None]:
         text = text.strip()
         if not text:
             return
 
-        conversation_id = self.ensure_conversation()
+        if self.llm is None:
+            yield (
+                "[No model loaded. Open Model Manager, select or download a GGUF, "
+                "then click Apply.]"
+            )
+            return
 
+        conversation_id = self.ensure_conversation()
         self.store.save_message(conversation_id, "user", text)
 
         message_count = self.store.get_message_count(conversation_id)
