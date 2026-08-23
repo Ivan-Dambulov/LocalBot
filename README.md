@@ -12,7 +12,7 @@ Local AI Assistant is a small desktop client for **GGUF** models. You chat in a 
 
 ---
 
-**Still in BETA, bugs and features are beign work on.**
+**Still in BETA, bugs and features are being worked on.**
 
 ---
 
