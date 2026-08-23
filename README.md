@@ -44,6 +44,11 @@ Local AI Assistant is a small desktop client for **GGUF** models. You chat in a 
 - Network is only used when you explicitly download a model  
 - No telemetry built into the app  
 
+### Still in works
+- Tools
+- Web Search
+- Conversation summery
+
 ---
 
 ## Requirements
