@@ -1,9 +1,11 @@
 from llama_cpp import Llama
 
 from llm.base import BaseLLM
-
+from llama_cpp import llama_cpp
+print("Supports GPU offload:", llama_cpp.llama_supports_gpu_offload())
 
 class LlamaRuntime(BaseLLM):
+
 
     def __init__(
         self,

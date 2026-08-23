@@ -1,154 +1,89 @@
-from typing import Generator
+from typing import Generator, Optional
 
 
 class AssistantEngine:
 
-    def __init__(
-        self,
-        llm,
-        store
-    ):
+    def __init__(self, llm, store):
         self.llm = llm
         self.store = store
-
-        self.conversation_id = (
-            self.store.create_conversation()
-        )
+        # None until the user actually sends a message
+        self.conversation_id: Optional[int] = None
 
     # -----------------------------------------------------
     # Conversations
     # -----------------------------------------------------
 
-    def new_conversation(self) -> int:
+    def new_conversation(self) -> None:
+        """Start a blank draft — no DB row until the first message."""
+        self.conversation_id = None
 
-        self.conversation_id = (
-            self.store.create_conversation()
-        )
-
+    def ensure_conversation(self) -> int:
+        """Create a DB conversation on demand (first user message)."""
+        if self.conversation_id is None:
+            self.conversation_id = self.store.create_conversation()
         return self.conversation_id
 
-    def load_conversation(
-        self,
-        conversation_id: int
-    ):
-
-        conversation = (
-            self.store.get_conversation(
-                conversation_id
-            )
-        )
-
+    def load_conversation(self, conversation_id: int):
+        conversation = self.store.get_conversation(conversation_id)
         if conversation is None:
-            raise ValueError(
-                "Conversation does not exist."
-            )
-
+            raise ValueError("Conversation does not exist.")
         self.conversation_id = conversation_id
-
-        return self.store.load_messages(
-            conversation_id
-        )
+        return self.store.load_messages(conversation_id)
 
     def get_conversations(self):
         return self.store.get_conversations()
+
+    def clear_conversations(self, scope: str) -> int:
+        """
+        scope: 'today' | 'last_week' | 'all'
+        Does not create a replacement empty conversation.
+        """
+        deleted = self.store.clear_conversations(scope)
+        self.conversation_id = None
+        return deleted
+
+    def delete_conversation(self, conversation_id: int) -> None:
+        self.store.delete_conversation(conversation_id)
+        if self.conversation_id == conversation_id:
+            self.conversation_id = None
 
     # -----------------------------------------------------
     # Chat
     # -----------------------------------------------------
 
-    def send(
-        self,
-        text: str
-    ) -> Generator[str, None, None]:
-
+    def send(self, text: str) -> Generator[str, None, None]:
         text = text.strip()
-
         if not text:
             return
 
-        conversation_id = (
-            self.conversation_id
-        )
+        conversation_id = self.ensure_conversation()
 
-        # Save user message
-        self.store.save_message(
-            conversation_id,
-            "user",
-            text
-        )
+        self.store.save_message(conversation_id, "user", text)
 
-        # Automatically create a title from
-        # the first user message.
-        message_count = (
-            self.store.get_message_count(
-                conversation_id
-            )
-        )
-
+        message_count = self.store.get_message_count(conversation_id)
         if message_count == 1:
-
             title = self._make_title(text)
+            self.store.update_title(conversation_id, title)
 
-            self.store.update_title(
-                conversation_id,
-                title
-            )
-
-        # Load complete conversation
-        messages = (
-            self.store.load_messages(
-                conversation_id
-            )
-        )
-
-        # Remove database-only fields before
-        # sending to the LLM.
+        messages = self.store.load_messages(conversation_id)
         llm_messages = [
-            {
-                "role": message["role"],
-                "content": message["content"]
-            }
+            {"role": message["role"], "content": message["content"]}
             for message in messages
         ]
 
-        # Generate response
         response_parts = []
-
-        for token in self.llm.stream(
-            llm_messages
-        ):
-
+        for token in self.llm.stream(llm_messages):
             response_parts.append(token)
-
             yield token
 
-        response = "".join(
-            response_parts
-        )
-
-        # Save assistant response
+        response = "".join(response_parts)
         if response.strip():
-
-            self.store.save_message(
-                conversation_id,
-                "assistant",
-                response
-            )
-
+            self.store.save_message(conversation_id, "assistant", response)
 
     @staticmethod
     def _make_title(text: str) -> str:
-
-        text = " ".join(
-            text.strip().split()
-        )
-
+        text = " ".join(text.strip().split())
         max_length = 50
-
         if len(text) <= max_length:
             return text
-
-        return (
-            text[:max_length - 3].rstrip()
-            + "..."
-        )
+        return text[: max_length - 3].rstrip() + "..."

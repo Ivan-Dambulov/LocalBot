@@ -275,3 +275,94 @@ class ConversationStore:
                 """,
                 (conversation_id,)
             )
+
+
+    def delete_conversations_since(self, since_iso: str) -> int:
+        """
+        Delete conversations whose updated_at is on or after since_iso
+        (SQLite datetime string, e.g. '2026-08-23 00:00:00').
+        Returns number of conversations deleted.
+        """
+        with self._connect() as connection:
+            connection.execute("PRAGMA foreign_keys = ON")
+            cursor = connection.execute(
+                """
+                SELECT id FROM conversations
+                WHERE updated_at >= ?
+                """,
+                (since_iso,),
+            )
+            ids = [row["id"] for row in cursor.fetchall()]
+            if not ids:
+                return 0
+            placeholders = ",".join("?" * len(ids))
+            connection.execute(
+                f"DELETE FROM messages WHERE conversation_id IN ({placeholders})",
+                ids,
+            )
+            connection.execute(
+                f"DELETE FROM conversations WHERE id IN ({placeholders})",
+                ids,
+            )
+            return len(ids)
+
+    def delete_conversations_older_than(self, before_iso: str) -> int:
+        """
+        Delete conversations whose updated_at is strictly before before_iso.
+        Returns number of conversations deleted.
+        """
+        with self._connect() as connection:
+            connection.execute("PRAGMA foreign_keys = ON")
+            cursor = connection.execute(
+                """
+                SELECT id FROM conversations
+                WHERE updated_at < ?
+                """,
+                (before_iso,),
+            )
+            ids = [row["id"] for row in cursor.fetchall()]
+            if not ids:
+                return 0
+            placeholders = ",".join("?" * len(ids))
+            connection.execute(
+                f"DELETE FROM messages WHERE conversation_id IN ({placeholders})",
+                ids,
+            )
+            connection.execute(
+                f"DELETE FROM conversations WHERE id IN ({placeholders})",
+                ids,
+            )
+            return len(ids)
+
+    def delete_all_conversations(self) -> int:
+        """Delete every conversation and message. Returns count removed."""
+        with self._connect() as connection:
+            connection.execute("PRAGMA foreign_keys = ON")
+            row = connection.execute(
+                "SELECT COUNT(*) AS count FROM conversations"
+            ).fetchone()
+            count = row["count"]
+            connection.execute("DELETE FROM messages")
+            connection.execute("DELETE FROM conversations")
+            return count
+
+    def clear_conversations(self, scope: str) -> int:
+        """
+        scope: 'today' | 'last_week' | 'all'
+        - today: updated today (local calendar day)
+        - last_week: updated in the last 7 days
+        - all: everything
+        """
+        from datetime import datetime, timedelta, timezone
+
+        # SQLite CURRENT_TIMESTAMP is UTC
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        if scope == "all":
+            return self.delete_all_conversations()
+        if scope == "today":
+            start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            return self.delete_conversations_since(start.strftime("%Y-%m-%d %H:%M:%S"))
+        if scope == "last_week":
+            start = now - timedelta(days=7)
+            return self.delete_conversations_since(start.strftime("%Y-%m-%d %H:%M:%S"))
+        raise ValueError(f"Unknown clear scope: {scope}")
