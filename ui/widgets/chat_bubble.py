@@ -172,6 +172,8 @@ class ChatBubble(ctk.CTkFrame):
         for child in self._content_holder.winfo_children():
             child.destroy()
 
+        self._stream_label = None
+
     def _render(self, text: str):
         self._clear_content()
         chunks = list(_split_content(text)) or [("text", text)]
@@ -193,18 +195,21 @@ class ChatBubble(ctk.CTkFrame):
                 block.pack(fill="x", pady=(4, 4))
 
     def _render_plain(self, text: str):
-        """Fast path used while streaming: single wrapping label, no parsing."""
-        self._clear_content()
-        lbl = ctk.CTkLabel(
-            self._content_holder,
-            text=text if text else " ",
-            text_color=self._text_color,
-            font=ctk.CTkFont(size=14),
-            justify="left",
-            anchor="w",
-            wraplength=MAX_WRAPLENGTH,
-        )
-        lbl.pack(fill="x", anchor="w")
+        """Update the existing streaming label instead of recreating it."""
+
+        if self._stream_label is None:
+            self._stream_label = ctk.CTkLabel(
+                self._content_holder,
+                text=" ",
+                text_color=self._text_color,
+                font=ctk.CTkFont(size=14),
+                justify="left",
+                anchor="w",
+                wraplength=MAX_WRAPLENGTH,
+            )
+            self._stream_label.pack(fill="x", anchor="w")
+
+        self._stream_label.configure(text=text if text else " ")
 
     # ------------------------------------------------------------------
     # Public API
