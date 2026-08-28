@@ -46,14 +46,28 @@ class MainWindow(ctk.CTk):
         self.title("LocalBot")
         self.geometry("1200x800")
         self.minsize(960, 640)
-
         self._build_ui()
         self._apply_theme()
         self._refresh_conversations()
         self._update_status()
         self._set_generating(False)
 
+    def _get_installed_models(self):
+        """Return list of (display_name, full_path) for every .gguf in models_dir."""
+        models_dir = Path(self.models_dir)
+        if not models_dir.is_dir():
+            return []
+
+        results = []
+        for p in sorted(models_dir.glob("*.gguf")):
+            name = p.name
+            if len(name) > 28:  # keep dropdown readable
+                name = name[:25] + "…"
+            results.append((name, str(p)))
+        return results
+
     # ------------------------------------------------------------------ UI
+
     def _build_ui(self):
         self.main = ctk.CTkFrame(self, fg_color="transparent")
         self.main.pack(fill="both", expand=True)
@@ -135,15 +149,34 @@ class MainWindow(ctk.CTk):
         if len(model_name) > 22:
             model_name = model_name[:19] + "…"
 
-        self.model_var = ctk.StringVar(value=model_name)
+        # Build list of installed models
+        installed = self._get_installed_models()
+        display_names = [name for name, _ in installed] or ["No model"]
+
+        current_name = Path(self.model_path).name if self.model_path else "No model"
+        if len(current_name) > 28:
+            current_name = current_name[:25] + "…"
+
+        # Make sure current model appears even if it's outside models_dir
+        if self.model_path and current_name not in display_names:
+            display_names.insert(0, current_name)
+
+        self.model_var = ctk.StringVar(value=current_name)
         self.model_menu = ctk.CTkOptionMenu(
             right_header,
             variable=self.model_var,
-            values=[model_name],
-            width=150,
+            values=display_names,
+            width=180,  # a bit wider is nicer
             height=30,
             corner_radius=9,
+            fg_color="#F2F2F7",
+            button_color="#E5E5EA",
+            button_hover_color="#D1D1D6",
+            text_color="#1C1C1E",
+            dropdown_fg_color="#FFFFFF",
+            dropdown_text_color="#1C1C1E",
             font=ctk.CTkFont(size=12),
+            command=self._on_model_selected,  # ← now a real bound method
         )
         self.model_menu.pack(side="left", padx=(0, 6))
 
@@ -270,6 +303,34 @@ class MainWindow(ctk.CTk):
         )
         # stop_btn is packed only while generating
 
+    # ------------------------------------------------------------------ Model dropdown
+    def _on_model_selected(self, choice: str):
+        """Called when user picks a model from the dropdown."""
+        if choice in ("No model", ""):
+            return
+
+        # Find full path that matches the display name
+        installed = self._get_installed_models()
+        path = None
+        for name, full in installed:
+            if name == choice:
+                path = full
+                break
+
+        # Fallback: current model path (in case it lives outside models_dir)
+        if path is None and self.model_path and Path(self.model_path).name.startswith(choice.rstrip("…")):
+            path = self.model_path
+
+        if not path or not Path(path).is_file():
+            messagebox.showwarning("Model not found", f"Could not locate:\n{choice}")
+            self._update_status()
+            return
+
+        if path == self.model_path:
+            return  # already loaded
+
+        self._on_model_applied(path)  # re-use the existing loader
+
     # ------------------------------------------------------------------ Theme
     def _apply_theme(self):
         """Paint every major region the same mode — no mixed light/dark."""
@@ -346,28 +407,6 @@ class MainWindow(ctk.CTk):
         self._update_status()
         self._refresh_attachment_view()
         self._reload_visible_chat()
-
-
-    def _reload_visible_chat(self):
-        """Rebuild on-screen messages so bubbles match the current theme."""
-        if self._generating:
-            return
-
-        self.chat_view.clear()
-
-        conv_id = self._current_conv_id or getattr(
-            self.engine, "conversation_id", None
-        )
-        if not conv_id:
-            return
-
-        try:
-            messages = self.engine.store.load_messages(conv_id)
-        except Exception:
-            return
-
-        for m in messages:
-            self._append(m["role"], m["content"])
 
     def _update_theme_button_label(self):
         # Show the mode you are currently in
@@ -477,26 +516,29 @@ class MainWindow(ctk.CTk):
             self.input.configure(state="normal")
 
     def _update_status(self):
-        c = colors()
-        name = Path(self.model_path).name if self.model_path else "No model"
-        if len(name) > 22:
-            name = name[:19] + "…"
-        self.model_var.set(name)
+        installed = self._get_installed_models()
+        display_names = [name for name, _ in installed] or ["No model"]
+
+        current_name = Path(self.model_path).name if self.model_path else "No model"
+        if len(current_name) > 28:
+            current_name = current_name[:25] + "…"
+
+        if self.model_path and current_name not in display_names:
+            display_names.insert(0, current_name)
+
+        self.model_var.set(current_name)
         try:
-            self.model_menu.configure(values=[name])
+            self.model_menu.configure(values=display_names)
         except Exception:
             pass
+
         if self.model_path:
-            self.status_dot.configure(text_color=c["success"])
             self.connection_label.configure(
-                text="Local Server Connected",
-                text_color=c["text_secondary"],
+                text="Local Server Connected", text_color="#8E8E93"
             )
         else:
-            self.status_dot.configure(text_color=c["warning"])
             self.connection_label.configure(
-                text="No model loaded",
-                text_color=c["warning"],
+                text="No model loaded", text_color="#FF9500"
             )
 
     # ------------------------------------------------------------------ Conversations
