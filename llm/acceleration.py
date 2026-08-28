@@ -657,7 +657,6 @@ def windows_install_build_tools() -> list[list[str]]:
             "--accept-source-agreements",
             "--override",
             "--wait",
-            "--passive",
             "--add",
             "Microsoft.VisualStudio.Workload.VCTools",
             "--includeRecommended",
@@ -665,22 +664,37 @@ def windows_install_build_tools() -> list[list[str]]:
     ]
 
 
+# In windows_install_build_tools() and windows_install_cmake()
+# Add --disable-interactivity where possible and better error handling
+
 def windows_install_cmake() -> list[list[str]]:
     if not winget_exists():
         return []
+    return [[
+        "winget", "install",
+        "--id", "Kitware.CMake",
+        "--exact",
+        "--silent",
+        "--accept-package-agreements",
+        "--accept-source-agreements",
+        "--disable-interactivity",
+    ]]
 
-    return [
-        [
-            "winget",
-            "install",
-            "--id",
-            "Kitware.CMake",
-            "--exact",
-            "--silent",
-            "--accept-package-agreements",
-            "--accept-source-agreements",
-        ]
-    ]
+
+def windows_install_build_tools() -> list[list[str]]:
+    if not winget_exists():
+        return []
+    return [[
+        "winget", "install",
+        "--id", "Microsoft.VisualStudio.2022.BuildTools",
+        "--exact",
+        "--silent",
+        "--accept-package-agreements",
+        "--accept-source-agreements",
+        "--disable-interactivity",
+        "--override",
+        "--wait --passive --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended",
+    ]]
 
 
 def windows_install_vulkan() -> list[list[str]]:
@@ -1871,3 +1885,10 @@ def save_diagnostics(path: str | Path) -> None:
         ),
         encoding="utf-8",
     )
+
+def refresh_path_and_recheck():
+    # On Windows, force a PATH refresh if possible
+    if is_windows():
+        # Simple approach: tell the user a restart of the app is needed
+        # or spawn a new process with updated environment
+        pass
