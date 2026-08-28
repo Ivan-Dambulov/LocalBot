@@ -2,11 +2,12 @@
 import threading
 from pathlib import Path
 import customtkinter as ctk
-from tkinter import messagebox
-
+from tkinter import (
+    messagebox,
+    filedialog,
+)
 from ui.settings import load_preferences, save_preferences
 from ui.widgets.chat_view import ChatView
-
 
 ctk.set_appearance_mode("Light")
 ctk.set_default_color_theme("blue")
@@ -22,7 +23,6 @@ class MainWindow(ctk.CTk):
         models_dir: str = "models",
     ):
         super().__init__()
-
         self.engine = engine
         self.model_path = model_path
         self.gpu_layers = gpu_layers
@@ -31,17 +31,19 @@ class MainWindow(ctk.CTk):
         self._current_conv_id = None
         self._all_conversations = []
         self._stream_buffer = ""
-
+        self.preferences = load_preferences()
+        self.web_search_enabled = bool(
+            self.preferences.get("web_search_enabled", False)
+        )
+        self.engine.set_web_search_enabled(self.web_search_enabled)
         self.title("LocalBot")
         self.geometry("1200x800")
         self.minsize(960, 640)
         self.configure(fg_color="#FAFAFA")
-
         try:
             self.attributes("-alpha", 0.99)
         except Exception:
             pass
-
         self._build_ui()
         self._refresh_conversations()
         self._update_status()
@@ -130,8 +132,8 @@ class MainWindow(ctk.CTk):
         model_name = Path(self.model_path).name if self.model_path else "No model"
         if len(model_name) > 22:
             model_name = model_name[:19] + "…"
-        self.model_var = ctk.StringVar(value=model_name)
 
+        self.model_var = ctk.StringVar(value=model_name)
         self.model_menu = ctk.CTkOptionMenu(
             right_header,
             variable=self.model_var,
@@ -198,6 +200,16 @@ class MainWindow(ctk.CTk):
         # --- Chat view ---
         self.chat_view = ChatView(right, corner_radius=0)
         self.chat_view.pack(fill="both", expand=True, padx=28, pady=(14, 0))
+        self.attachment_frame = ctk.CTkFrame(
+            right,
+            fg_color="transparent",
+        )
+
+        self.attachment_frame.pack(
+            fill="x",
+            padx=28,
+            pady=(4, 0),
+        )
 
         # --- Input bar ---
         input_bar = ctk.CTkFrame(right, fg_color="transparent", height=70)
@@ -220,11 +232,30 @@ class MainWindow(ctk.CTk):
             width=34,
             height=34,
             corner_radius=17,
-            fg_color="transparent",
-            hover_color="#F2F2F7",
-            text_color="#8E8E93",
-            command=lambda: None,
-        ).pack(side="left", padx=(6, 0))
+            fg_color="#E5E5EA",
+            hover_color="#D1D1D6",
+            text_color="#1C1C1E",
+            font=ctk.CTkFont(size=15),
+            command=self._attach_files,
+        ).pack(
+            side="left",
+            padx=(6, 4),
+        )
+
+        self.web_search_button = ctk.CTkButton(
+            input_inner,
+            text="🌐",
+            width=34,
+            height=34,
+            corner_radius=17,
+            fg_color="#E5E5EA",
+            hover_color="#D1D1D6",
+            text_color="#1C1C1E",
+            font=ctk.CTkFont(size=15),
+            command=self._toggle_web_search,
+        )
+        self.web_search_button.pack(side="left", padx=(6, 0))
+        self._update_web_search_button()
 
         self.input = ctk.CTkEntry(
             input_inner,
@@ -252,6 +283,50 @@ class MainWindow(ctk.CTk):
             command=self._send,
         ).pack(side="right", padx=6)
 
+    # ------------------------------------------------------------------ Web search toggle
+    def _toggle_web_search(self):
+        self.web_search_enabled = not self.web_search_enabled
+        self.engine.set_web_search_enabled(self.web_search_enabled)
+        self.preferences["web_search_enabled"] = self.web_search_enabled
+        save_preferences(self.preferences)
+        self._update_web_search_button()
+
+    def _attach_files(self):
+        files = filedialog.askopenfilenames(
+            title="Select files",
+            filetypes=[
+                (
+                    "Supported files",
+                    "*.txt *.md *.pdf *.docx *.xlsx *.xls",
+                ),
+                (
+                    "All files",
+                    "*.*",
+                ),
+            ],
+        )
+
+        if not files:
+            return
+
+        self.engine.add_attachments(files)
+
+        self._refresh_attachment_view()
+
+    def _update_web_search_button(self):
+        if self.web_search_enabled:
+            self.web_search_button.configure(
+                fg_color="#0A84FF",
+                hover_color="#0071E3",
+                text_color="#FFFFFF",
+            )
+        else:
+            self.web_search_button.configure(
+                fg_color="#E5E5EA",
+                hover_color="#D1D1D6",
+                text_color="#1C1C1E",
+            )
+
     # ------------------------------------------------------------------ Status
     def _update_status(self):
         name = Path(self.model_path).name if self.model_path else "No model"
@@ -262,7 +337,6 @@ class MainWindow(ctk.CTk):
             self.model_menu.configure(values=[name])
         except Exception:
             pass
-
         if self.model_path:
             self.connection_label.configure(
                 text="Local Server Connected", text_color="#8E8E93"
@@ -291,11 +365,9 @@ class MainWindow(ctk.CTk):
     def _render_conversation_list(self, conversations):
         for widget in self.conv_list.winfo_children():
             widget.destroy()
-
         self._conv_ids = []
         for conv in conversations:
             is_active = conv["id"] == self._current_conv_id
-
             card = ctk.CTkFrame(
                 self.conv_list,
                 height=56,
@@ -304,10 +376,8 @@ class MainWindow(ctk.CTk):
             )
             card.pack(fill="x", pady=2, padx=4)
             card.pack_propagate(False)
-
             title_color = "#FFFFFF" if is_active else "#1C1C1E"
             sub_color = "#E0E0E0" if is_active else "#8E8E93"
-
             title = (conv.get("title") or "New Chat")[:28]
             ctk.CTkLabel(
                 card,
@@ -317,7 +387,6 @@ class MainWindow(ctk.CTk):
                 anchor="w",
                 height=18,
             ).place(x=12, y=8)
-
             preview = (conv.get("title") or "")[:38]
             ctk.CTkLabel(
                 card,
@@ -334,7 +403,6 @@ class MainWindow(ctk.CTk):
             card.bind("<Button-1>", _on_click)
             for child in card.winfo_children():
                 child.bind("<Button-1>", _on_click)
-
             self._conv_ids.append(conv["id"])
 
     def _load_conversation(self, cid: int):
@@ -369,18 +437,19 @@ class MainWindow(ctk.CTk):
             return
         self.input.delete(0, "end")
         self._append("user", text)
-
         self._stream_buffer = ""
         self.chat_view.show_typing_indicator()
 
         def worker():
             try:
-                for token in self.engine.send(text):
-                    self.after(0, lambda t=token: self._stream_token(t))
+                for token in self.engine.send(
+                        text,
+                        web_search=self.web_search_enabled,
+                ):
+                    self.after(0, self._stream_token, token)
                 self.after(0, self._finish_stream)
-                self.after(0, self._refresh_conversations)
-            except Exception as e:
-                self.after(0, lambda: self._stream_error(str(e)))
+            except Exception as exc:
+                self.after(0, self._stream_error, str(exc))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -392,6 +461,8 @@ class MainWindow(ctk.CTk):
         self.chat_view.finalize_streaming_message()
         self._stream_buffer = ""
 
+        self._refresh_attachment_view()
+
     def _stream_error(self, message: str):
         self.chat_view.hide_typing_indicator()
         self._append("system", f"Error: {message}")
@@ -400,7 +471,6 @@ class MainWindow(ctk.CTk):
     # ------------------------------------------------------------------ Model Manager
     def _open_model_manager(self):
         from ui.model_manager import ModelManager
-
         ModelManager(
             self,
             current_model_path=self.model_path,
@@ -411,7 +481,6 @@ class MainWindow(ctk.CTk):
     def _on_model_applied(self, new_path: str):
         try:
             from llm.llama_runtime import LlamaRuntime
-
             llm = LlamaRuntime(
                 model_path=new_path,
                 context_size=self.context_size,
@@ -431,3 +500,26 @@ class MainWindow(ctk.CTk):
             self.engine.clear_conversations("all")
             self._new_chat()
             self._refresh_conversations()
+
+    def _refresh_attachment_view(self):
+
+        for widget in self.attachment_frame.winfo_children():
+            widget.destroy()
+
+        for filename in (
+                self.engine.get_attachment_names()
+        ):
+            chip = ctk.CTkLabel(
+                self.attachment_frame,
+                text=f"📄 {filename}",
+                fg_color="#F2F2F7",
+                corner_radius=8,
+                padx=8,
+                pady=4,
+            )
+
+            chip.pack(
+                side="left",
+                padx=4,
+                pady=4,
+            )
