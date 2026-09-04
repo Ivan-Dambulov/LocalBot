@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Local AI Assistant – Modern CustomTkinter version."""
 
+import multiprocessing
 import os
 from pathlib import Path
 from tkinter import messagebox
@@ -128,4 +129,5 @@ def main():
 
 
 if __name__ == "__main__":
+    multiprocessing.freeze_support()
     main()
