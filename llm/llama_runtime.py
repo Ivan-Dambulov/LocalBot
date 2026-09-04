@@ -1,6 +1,7 @@
 from llama_cpp import Llama
 from llm.base import BaseLLM
 
+
 class LlamaRuntime(BaseLLM):
     def __init__(
         self,

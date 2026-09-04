@@ -1,15 +1,13 @@
 # ui/main_window.py
 import threading
 from pathlib import Path
+
 import customtkinter as ctk
-from tkinter import messagebox
+from tkinter import messagebox, filedialog
 
 from ui.settings import load_preferences, save_preferences
+from ui.theme import colors, paint_scrollable
 from ui.widgets.chat_view import ChatView
-
-
-ctk.set_appearance_mode("Light")
-ctk.set_default_color_theme("blue")
 
 
 class MainWindow(ctk.CTk):
@@ -22,7 +20,6 @@ class MainWindow(ctk.CTk):
         models_dir: str = "models",
     ):
         super().__init__()
-
         self.engine = engine
         self.model_path = model_path
         self.gpu_layers = gpu_layers
@@ -31,112 +28,145 @@ class MainWindow(ctk.CTk):
         self._current_conv_id = None
         self._all_conversations = []
         self._stream_buffer = ""
+        self._generating = False
+
+        self.preferences = load_preferences()
+        self.web_search_enabled = bool(
+            self.preferences.get("web_search_enabled", False)
+        )
+        self.engine.set_web_search_enabled(self.web_search_enabled)
+
+        # Strict Light / Dark only (no System mixing with hard-coded colors)
+        appearance = self.preferences.get("appearance_mode", "Dark")
+        if appearance not in ("Light", "Dark"):
+            appearance = "Dark"
+        ctk.set_appearance_mode(appearance)
+        ctk.set_default_color_theme("blue")
 
         self.title("LocalBot")
         self.geometry("1200x800")
         self.minsize(960, 640)
-        self.configure(fg_color="#FAFAFA")
-
-        try:
-            self.attributes("-alpha", 0.99)
-        except Exception:
-            pass
-
         self._build_ui()
+        self._apply_theme()
         self._refresh_conversations()
         self._update_status()
+        self._set_generating(False)
+
+    def _get_installed_models(self):
+        """Return list of (display_name, full_path) for every .gguf in models_dir."""
+        models_dir = Path(self.models_dir)
+        if not models_dir.is_dir():
+            return []
+
+        results = []
+        for p in sorted(models_dir.glob("*.gguf")):
+            name = p.name
+            if len(name) > 28:  # keep dropdown readable
+                name = name[:25] + "…"
+            results.append((name, str(p)))
+        return results
 
     # ------------------------------------------------------------------ UI
+
     def _build_ui(self):
-        main = ctk.CTkFrame(self, fg_color="transparent")
-        main.pack(fill="both", expand=True)
+        self.main = ctk.CTkFrame(self, fg_color="transparent")
+        self.main.pack(fill="both", expand=True)
 
         # ==================== LEFT SIDEBAR ====================
-        sidebar = ctk.CTkFrame(
-            main, width=270, corner_radius=0, fg_color="#F5F5F7"
-        )
-        sidebar.pack(side="left", fill="y")
-        sidebar.pack_propagate(False)
+        self.sidebar = ctk.CTkFrame(self.main, width=280, corner_radius=0)
+        self.sidebar.pack(side="left", fill="y")
+        self.sidebar.pack_propagate(False)
 
-        ctk.CTkLabel(
-            sidebar,
+        self.sidebar_title = ctk.CTkLabel(
+            self.sidebar,
             text="Chats",
             font=ctk.CTkFont(size=20, weight="bold"),
-            text_color="#1C1C1E",
-        ).pack(anchor="w", padx=18, pady=(22, 10))
+        )
+        self.sidebar_title.pack(anchor="w", padx=18, pady=(22, 10))
 
         self.search_entry = ctk.CTkEntry(
-            sidebar,
+            self.sidebar,
             placeholder_text="Search conversations…",
             height=34,
             corner_radius=10,
-            fg_color="#FFFFFF",
             border_width=1,
-            border_color="#E5E5EA",
-            text_color="#1C1C1E",
-            placeholder_text_color="#AEAEB2",
             font=ctk.CTkFont(size=13),
         )
         self.search_entry.pack(fill="x", padx=14, pady=(0, 10))
-        self.search_entry.bind("<KeyRelease>", lambda e: self._filter_conversations())
+        self.search_entry.bind(
+            "<KeyRelease>",
+            lambda e: self._filter_conversations(),
+        )
 
         self.conv_list = ctk.CTkScrollableFrame(
-            sidebar, fg_color="transparent", corner_radius=0
+            self.sidebar,
+            fg_color="transparent",
+            corner_radius=0,
         )
         self.conv_list.pack(fill="both", expand=True, padx=8, pady=(0, 12))
 
         # ==================== RIGHT SIDE ====================
-        right = ctk.CTkFrame(main, fg_color="#FAFAFA", corner_radius=0)
-        right.pack(side="left", fill="both", expand=True)
+        self.right = ctk.CTkFrame(self.main, corner_radius=0)
+        self.right.pack(side="left", fill="both", expand=True)
 
-        # --- Header ---
-        header = ctk.CTkFrame(
-            right, height=60, corner_radius=0, fg_color="#FFFFFF"
-        )
-        header.pack(fill="x")
-        header.pack_propagate(False)
+        self.header = ctk.CTkFrame(self.right, height=60, corner_radius=0)
+        self.header.pack(fill="x")
+        self.header.pack_propagate(False)
 
-        left_header = ctk.CTkFrame(header, fg_color="transparent")
+        left_header = ctk.CTkFrame(self.header, fg_color="transparent")
         left_header.pack(side="left", padx=20, pady=10)
 
-        ctk.CTkLabel(
+        self.app_title = ctk.CTkLabel(
             left_header,
             text="LocalBot",
             font=ctk.CTkFont(size=17, weight="bold"),
-            text_color="#1C1C1E",
-        ).pack(anchor="w")
+        )
+        self.app_title.pack(anchor="w")
 
         status_row = ctk.CTkFrame(left_header, fg_color="transparent")
         status_row.pack(anchor="w")
 
-        ctk.CTkLabel(
+        self.status_dot = ctk.CTkLabel(
             status_row,
             text="●",
-            text_color="#34C759",
             font=ctk.CTkFont(size=11),
-        ).pack(side="left", padx=(0, 4))
+        )
+        self.status_dot.pack(side="left", padx=(0, 4))
 
         self.connection_label = ctk.CTkLabel(
             status_row,
             text="Local Server Connected",
             font=ctk.CTkFont(size=11),
-            text_color="#8E8E93",
         )
         self.connection_label.pack(side="left")
 
-        right_header = ctk.CTkFrame(header, fg_color="transparent")
+        right_header = ctk.CTkFrame(self.header, fg_color="transparent")
         right_header.pack(side="right", padx=16, pady=12)
 
-        model_name = Path(self.model_path).name if self.model_path else "No model"
+        model_name = (
+            Path(self.model_path).name if self.model_path else "No model"
+        )
         if len(model_name) > 22:
             model_name = model_name[:19] + "…"
-        self.model_var = ctk.StringVar(value=model_name)
 
+        # Build list of installed models
+        installed = self._get_installed_models()
+        display_names = [name for name, _ in installed] or ["No model"]
+
+        current_name = Path(self.model_path).name if self.model_path else "No model"
+        if len(current_name) > 28:
+            current_name = current_name[:25] + "…"
+
+        # Make sure current model appears even if it's outside models_dir
+        if self.model_path and current_name not in display_names:
+            display_names.insert(0, current_name)
+
+        self.model_var = ctk.StringVar(value=current_name)
         self.model_menu = ctk.CTkOptionMenu(
             right_header,
             variable=self.model_var,
-            values=[model_name],
-            width=150,
+            values=display_names,
+            width=180,  # a bit wider is nicer
             height=30,
             corner_radius=9,
             fg_color="#F2F2F7",
@@ -146,120 +176,359 @@ class MainWindow(ctk.CTk):
             dropdown_fg_color="#FFFFFF",
             dropdown_text_color="#1C1C1E",
             font=ctk.CTkFont(size=12),
+            command=self._on_model_selected,  # ← now a real bound method
         )
         self.model_menu.pack(side="left", padx=(0, 6))
 
-        ctk.CTkButton(
+        self.theme_btn = ctk.CTkButton(
+            right_header,
+            text="Dark",
+            width=72,
+            height=30,
+            corner_radius=9,
+            border_width=1,
+            font=ctk.CTkFont(size=12),
+            command=self._toggle_theme,
+        )
+        self.theme_btn.pack(side="left", padx=3)
+
+        self.settings_btn = ctk.CTkButton(
             right_header,
             text="⚙  Settings",
             width=96,
             height=30,
             corner_radius=9,
-            fg_color="#FFFFFF",
             border_width=1,
-            border_color="#E5E5EA",
-            text_color="#1C1C1E",
-            hover_color="#F2F2F7",
             font=ctk.CTkFont(size=12),
             command=self._open_model_manager,
-        ).pack(side="left", padx=3)
+        )
+        self.settings_btn.pack(side="left", padx=3)
 
-        ctk.CTkButton(
+        self.clear_btn = ctk.CTkButton(
             right_header,
-            text="🗑  Clear All",
-            width=96,
+            text="🗑  Clear",
+            width=80,
             height=30,
             corner_radius=9,
-            fg_color="#FFFFFF",
             border_width=1,
-            border_color="#E5E5EA",
-            text_color="#1C1C1E",
-            hover_color="#F2F2F7",
             font=ctk.CTkFont(size=12),
             command=self._clear_menu,
-        ).pack(side="left", padx=3)
+        )
+        self.clear_btn.pack(side="left", padx=3)
 
-        ctk.CTkButton(
+        self.new_chat_btn = ctk.CTkButton(
             right_header,
             text="+ New Chat",
             width=104,
             height=30,
             corner_radius=9,
-            fg_color="#0A84FF",
-            hover_color="#0071E3",
-            text_color="#FFFFFF",
             font=ctk.CTkFont(size=12, weight="bold"),
             command=self._new_chat,
-        ).pack(side="left", padx=(6, 0))
+        )
+        self.new_chat_btn.pack(side="left", padx=(6, 0))
 
-        # Separator under header
-        ctk.CTkFrame(right, height=1, fg_color="#E5E5EA").pack(fill="x")
+        self.header_sep = ctk.CTkFrame(self.right, height=1)
+        self.header_sep.pack(fill="x")
 
-        # --- Chat view ---
-        self.chat_view = ChatView(right, corner_radius=0)
+        self.chat_view = ChatView(self.right, corner_radius=0)
         self.chat_view.pack(fill="both", expand=True, padx=28, pady=(14, 0))
 
-        # --- Input bar ---
-        input_bar = ctk.CTkFrame(right, fg_color="transparent", height=70)
+        self.attachment_frame = ctk.CTkFrame(self.right, fg_color="transparent")
+        self.attachment_frame.pack(fill="x", padx=28, pady=(4, 0))
+
+        input_bar = ctk.CTkFrame(self.right, fg_color="transparent", height=70)
         input_bar.pack(fill="x", padx=28, pady=(10, 18))
 
-        input_inner = ctk.CTkFrame(
+        self.input_inner = ctk.CTkFrame(
             input_bar,
             height=48,
             corner_radius=24,
-            fg_color="#FFFFFF",
             border_width=1,
-            border_color="#E5E5EA",
         )
-        input_inner.pack(fill="x")
-        input_inner.pack_propagate(False)
+        self.input_inner.pack(fill="x")
+        self.input_inner.pack_propagate(False)
 
-        ctk.CTkButton(
-            input_inner,
+        self.attach_btn = ctk.CTkButton(
+            self.input_inner,
             text="📎",
             width=34,
             height=34,
             corner_radius=17,
-            fg_color="transparent",
-            hover_color="#F2F2F7",
-            text_color="#8E8E93",
-            command=lambda: None,
-        ).pack(side="left", padx=(6, 0))
+            font=ctk.CTkFont(size=15),
+            command=self._attach_files,
+        )
+        self.attach_btn.pack(side="left", padx=(6, 4))
+
+        self.web_search_button = ctk.CTkButton(
+            self.input_inner,
+            text="🌐",
+            width=34,
+            height=34,
+            corner_radius=17,
+            font=ctk.CTkFont(size=15),
+            command=self._toggle_web_search,
+        )
+        self.web_search_button.pack(side="left", padx=(0, 0))
 
         self.input = ctk.CTkEntry(
-            input_inner,
+            self.input_inner,
             placeholder_text="Type a message…",
             height=40,
             border_width=0,
-            fg_color="transparent",
-            text_color="#1C1C1E",
-            placeholder_text_color="#AEAEB2",
             font=ctk.CTkFont(size=14),
         )
+
         self.input.pack(side="left", fill="x", expand=True, padx=4)
         self.input.bind("<Return>", lambda e: self._send())
 
-        ctk.CTkButton(
-            input_inner,
+        self.send_btn = ctk.CTkButton(
+            self.input_inner,
             text="↑",
             width=36,
             height=36,
             corner_radius=18,
-            fg_color="#0A84FF",
-            hover_color="#0071E3",
-            text_color="#FFFFFF",
             font=ctk.CTkFont(size=16, weight="bold"),
             command=self._send,
-        ).pack(side="right", padx=6)
+        )
+        self.send_btn.pack(side="right", padx=6)
 
-    # ------------------------------------------------------------------ Status
-    def _update_status(self):
-        name = Path(self.model_path).name if self.model_path else "No model"
-        if len(name) > 22:
-            name = name[:19] + "…"
-        self.model_var.set(name)
+        self.stop_btn = ctk.CTkButton(
+            self.input_inner,
+            text="■",
+            width=36,
+            height=36,
+            corner_radius=18,
+            font=ctk.CTkFont(size=14, weight="bold"),
+            command=self._stop_generation,
+        )
+        # stop_btn is packed only while generating
+
+    # ------------------------------------------------------------------ Model dropdown
+    def _on_model_selected(self, choice: str):
+        """Called when user picks a model from the dropdown."""
+        if choice in ("No model", ""):
+            return
+
+        # Find full path that matches the display name
+        installed = self._get_installed_models()
+        path = None
+        for name, full in installed:
+            if name == choice:
+                path = full
+                break
+
+        # Fallback: current model path (in case it lives outside models_dir)
+        if path is None and self.model_path and Path(self.model_path).name.startswith(choice.rstrip("…")):
+            path = self.model_path
+
+        if not path or not Path(path).is_file():
+            messagebox.showwarning("Model not found", f"Could not locate:\n{choice}")
+            self._update_status()
+            return
+
+        if path == self.model_path:
+            return  # already loaded
+
+        self._on_model_applied(path)  # re-use the existing loader
+
+    # ------------------------------------------------------------------ Theme
+    def _apply_theme(self):
+        """Paint every major region the same mode — no mixed light/dark."""
+        c = colors()
+
+        self.configure(fg_color=c["bg"])
+        self.main.configure(fg_color=c["bg"])
+        self.sidebar.configure(fg_color=c["sidebar"])
+        self.right.configure(fg_color=c["bg"])
+        self.header.configure(fg_color=c["header"])
+        self.header_sep.configure(fg_color=c["border"])
+
+        # Sidebar list + internal canvas must match sidebar
+        paint_scrollable(self.conv_list, c["sidebar"])
+
+        self.sidebar_title.configure(text_color=c["text"])
+        self.search_entry.configure(
+            fg_color=c["surface"],
+            border_color=c["border"],
+            text_color=c["text"],
+            placeholder_text_color=c["text_secondary"],
+        )
+
+        self.app_title.configure(text_color=c["text"])
+        self.connection_label.configure(text_color=c["text_secondary"])
+
+        self.chat_view.apply_theme()
+        self.attachment_frame.configure(fg_color=c["bg"])
+
+        for btn in (self.theme_btn, self.settings_btn, self.clear_btn):
+            btn.configure(
+                fg_color=c["surface_alt"],
+                border_width=1,
+                border_color=c["border"],
+                text_color=c["text"],
+                hover_color=c["surface"],
+            )
+
+        self.new_chat_btn.configure(
+            fg_color=c["accent"],
+            hover_color=c["accent_hover"],
+            text_color="#FFFFFF",
+            border_width=0,
+        )
+        self.model_menu.configure(
+            fg_color=c["surface_alt"],
+            button_color=c["border"],
+            button_hover_color=c["surface"],
+            text_color=c["text"],
+            dropdown_fg_color=c["surface"],
+            dropdown_text_color=c["text"],
+            dropdown_hover_color=c["surface_alt"],
+        )
+
+        self.input_inner.configure(
+            fg_color=c["input_bg"],
+            border_color=c["border"],
+        )
+        self.input.configure(
+            text_color=c["text"],
+            placeholder_text_color=c["text_secondary"],
+            fg_color=c["input_bg"],
+        )
+        self.attach_btn.configure(
+            fg_color=c["surface_alt"],
+            hover_color=c["border"],
+            text_color=c["text"],
+        )
+
+        self._update_web_search_button()
+        self._update_theme_button_label()
+        self._set_generating(self._generating)
+        self._refresh_conversations()
+        self._update_status()
+        self._refresh_attachment_view()
+        self._reload_visible_chat()
+
+    def _update_theme_button_label(self):
+        # Show the mode you are currently in
+        if ctk.get_appearance_mode() == "Dark":
+            self.theme_btn.configure(text="Dark")
+        else:
+            self.theme_btn.configure(text="Light")
+
+    def _toggle_theme(self):
+        if ctk.get_appearance_mode() == "Dark":
+            new_mode = "Light"
+        else:
+            new_mode = "Dark"
+
+        ctk.set_appearance_mode(new_mode)
+        self.preferences["appearance_mode"] = new_mode
+        save_preferences(self.preferences)
+
+        # Apply shell colors, then rebuild bubbles after CTk updates mode
+        self.after(20, self._apply_theme)
+
+    def _reload_visible_chat(self):
+        """
+        Recreate every on-screen bubble from the DB so Light/Dark
+        always matches the current theme (including old conversations).
+        """
+        if self._generating:
+            return
+
+        conv_id = self._current_conv_id
+        if conv_id is None:
+            conv_id = getattr(self.engine, "conversation_id", None)
+
+        if not conv_id:
+            self.chat_view.clear()
+            self.chat_view.apply_theme()
+            return
+
         try:
-            self.model_menu.configure(values=[name])
+            messages = self.engine.store.load_messages(conv_id)
+        except Exception:
+            self.chat_view.clear()
+            self.chat_view.apply_theme()
+            return
+
+        self.chat_view.rebuild_messages(messages)
+
+    # ------------------------------------------------------------------ Web search / attach
+    def _toggle_web_search(self):
+        self.web_search_enabled = not self.web_search_enabled
+        self.engine.set_web_search_enabled(self.web_search_enabled)
+        self.preferences["web_search_enabled"] = self.web_search_enabled
+        save_preferences(self.preferences)
+        self._update_web_search_button()
+
+    def _attach_files(self):
+        if self._generating:
+            return
+        files = filedialog.askopenfilenames(
+            title="Select files",
+            filetypes=[
+                ("Supported files", "*.txt *.md *.pdf *.docx *.xlsx *.xls"),
+                ("All files", "*.*"),
+            ],
+        )
+        if not files:
+            return
+        self.engine.add_attachments(files)
+        self._refresh_attachment_view()
+
+    def _update_web_search_button(self):
+        c = colors()
+        if self.web_search_enabled:
+            self.web_search_button.configure(
+                fg_color=c["accent"],
+                hover_color=c["accent_hover"],
+                text_color="#FFFFFF",
+            )
+        else:
+            self.web_search_button.configure(
+                fg_color=c["surface_alt"],
+                hover_color=c["border"],
+                text_color=c["text"],
+            )
+
+    # ------------------------------------------------------------------ Status / generating
+    def _set_generating(self, active: bool):
+        self._generating = active
+        c = colors()
+        if active:
+            self.send_btn.pack_forget()
+            self.stop_btn.configure(
+                fg_color=c["danger"],
+                hover_color=c["danger_hover"],
+                text_color="#FFFFFF",
+            )
+            self.stop_btn.pack(side="right", padx=6)
+            self.input.configure(state="disabled")
+        else:
+            self.stop_btn.pack_forget()
+            self.send_btn.configure(
+                fg_color=c["accent"],
+                hover_color=c["accent_hover"],
+                text_color="#FFFFFF",
+            )
+            self.send_btn.pack(side="right", padx=6)
+            self.input.configure(state="normal")
+
+    def _update_status(self):
+        installed = self._get_installed_models()
+        display_names = [name for name, _ in installed] or ["No model"]
+
+        current_name = Path(self.model_path).name if self.model_path else "No model"
+        if len(current_name) > 28:
+            current_name = current_name[:25] + "…"
+
+        if self.model_path and current_name not in display_names:
+            display_names.insert(0, current_name)
+
+        self.model_var.set(current_name)
+        try:
+            self.model_menu.configure(values=display_names)
         except Exception:
             pass
 
@@ -283,32 +552,37 @@ class MainWindow(ctk.CTk):
             self._render_conversation_list(self._all_conversations)
             return
         filtered = [
-            c for c in self._all_conversations
-            if query in (c.get("title") or "").lower()
+            item
+            for item in self._all_conversations
+            if query in (item.get("title") or "").lower()
         ]
         self._render_conversation_list(filtered)
 
     def _render_conversation_list(self, conversations):
+        c = colors()
         for widget in self.conv_list.winfo_children():
             widget.destroy()
-
         self._conv_ids = []
+
+        # Keep list background in sync with sidebar
+        paint_scrollable(self.conv_list, c["sidebar"])
+
         for conv in conversations:
             is_active = conv["id"] == self._current_conv_id
-
             card = ctk.CTkFrame(
                 self.conv_list,
                 height=56,
                 corner_radius=12,
-                fg_color="#0A84FF" if is_active else "transparent",
+                # Solid colors only — never "transparent" (causes mixed strips)
+                fg_color=c["accent"] if is_active else c["surface_alt"],
             )
             card.pack(fill="x", pady=2, padx=4)
             card.pack_propagate(False)
 
-            title_color = "#FFFFFF" if is_active else "#1C1C1E"
-            sub_color = "#E0E0E0" if is_active else "#8E8E93"
-
+            title_color = "#FFFFFF" if is_active else c["text"]
+            sub_color = "#E0E0E0" if is_active else c["text_secondary"]
             title = (conv.get("title") or "New Chat")[:28]
+
             ctk.CTkLabel(
                 card,
                 text=title,
@@ -317,11 +591,9 @@ class MainWindow(ctk.CTk):
                 anchor="w",
                 height=18,
             ).place(x=12, y=8)
-
-            preview = (conv.get("title") or "")[:38]
             ctk.CTkLabel(
                 card,
-                text=preview,
+                text=(conv.get("title") or "")[:38],
                 font=ctk.CTkFont(size=11),
                 text_color=sub_color,
                 anchor="w",
@@ -329,27 +601,34 @@ class MainWindow(ctk.CTk):
             ).place(x=12, y=30)
 
             def _on_click(event, cid=conv["id"]):
-                self._load_conversation(cid)
+                if not self._generating:
+                    self._load_conversation(cid)
 
             card.bind("<Button-1>", _on_click)
             for child in card.winfo_children():
                 child.bind("<Button-1>", _on_click)
-
             self._conv_ids.append(conv["id"])
 
     def _load_conversation(self, cid: int):
+        if self._generating:
+            return
         self._current_conv_id = cid
-        messages = self.engine.load_conversation(cid)
-        self.chat_view.clear()
-        for m in messages:
-            self._append(m["role"], m["content"])
+        try:
+            messages = self.engine.load_conversation(cid)
+        except Exception as exc:
+            messagebox.showerror("Error", str(exc))
+            return
+        self.chat_view.rebuild_messages(messages)
         self._refresh_conversations()
 
     def _new_chat(self):
+        if self._generating:
+            return
         self.engine.new_conversation()
         self._current_conv_id = None
         self.chat_view.clear()
         self._refresh_conversations()
+        self._refresh_attachment_view()
 
     # ------------------------------------------------------------------ Messaging
     def _append(self, role: str, text: str):
@@ -364,25 +643,34 @@ class MainWindow(ctk.CTk):
             self.chat_view.add_system_message(text)
 
     def _send(self):
+        if self._generating:
+            return
         text = self.input.get().strip()
         if not text:
             return
         self.input.delete(0, "end")
         self._append("user", text)
-
         self._stream_buffer = ""
         self.chat_view.show_typing_indicator()
+        self._set_generating(True)
 
         def worker():
             try:
-                for token in self.engine.send(text):
-                    self.after(0, lambda t=token: self._stream_token(t))
+                for token in self.engine.send(
+                    text,
+                    web_search=self.web_search_enabled,
+                ):
+                    self.after(0, self._stream_token, token)
                 self.after(0, self._finish_stream)
-                self.after(0, self._refresh_conversations)
-            except Exception as e:
-                self.after(0, lambda: self._stream_error(str(e)))
+            except Exception as exc:
+                self.after(0, self._stream_error, str(exc))
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _stop_generation(self):
+        if not self._generating:
+            return
+        self.engine.request_stop()
 
     def _stream_token(self, token: str):
         self._stream_buffer += token
@@ -391,13 +679,19 @@ class MainWindow(ctk.CTk):
     def _finish_stream(self):
         self.chat_view.finalize_streaming_message()
         self._stream_buffer = ""
+        self._current_conv_id = self.engine.conversation_id
+        self._set_generating(False)
+        self._refresh_conversations()
+        self._refresh_attachment_view()
 
     def _stream_error(self, message: str):
         self.chat_view.hide_typing_indicator()
         self._append("system", f"Error: {message}")
         self._stream_buffer = ""
+        self._set_generating(False)
+        self._refresh_attachment_view()
 
-    # ------------------------------------------------------------------ Model Manager
+    # ------------------------------------------------------------------ Model manager
     def _open_model_manager(self):
         from ui.model_manager import ModelManager
 
@@ -421,13 +715,32 @@ class MainWindow(ctk.CTk):
             self.model_path = new_path
             self._update_status()
             messagebox.showinfo(
-                "Model loaded", f"Now using:\n{Path(new_path).name}"
+                "Model loaded",
+                f"Now using:\n{Path(new_path).name}",
             )
         except Exception as e:
             messagebox.showerror("Failed to load model", str(e))
 
     def _clear_menu(self):
+        if self._generating:
+            return
         if messagebox.askyesno("Clear", "Delete all conversations?"):
             self.engine.clear_conversations("all")
             self._new_chat()
             self._refresh_conversations()
+
+    def _refresh_attachment_view(self):
+        c = colors()
+        for widget in self.attachment_frame.winfo_children():
+            widget.destroy()
+        for filename in self.engine.get_attachment_names():
+            chip = ctk.CTkLabel(
+                self.attachment_frame,
+                text=f"📄 {filename}",
+                fg_color=c["chip"],
+                text_color=c["text"],
+                corner_radius=8,
+                padx=8,
+                pady=4,
+            )
+            chip.pack(side="left", padx=4, pady=4)

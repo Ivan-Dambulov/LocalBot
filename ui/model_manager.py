@@ -25,7 +25,7 @@ from llm.acceleration import (
     open_url,
     backend_is_verified,
 )
-
+from ui.acceleration_wizard import AccelerationWizard
 
 class ModelManager(ctk.CTkToplevel):
 
@@ -698,159 +698,84 @@ class ModelManager(ctk.CTkToplevel):
         )
 
     # ==================================================================
-    # Acceleration installation
+    # Acceleration installation (guided wizard)
     # ==================================================================
 
     def _start_acceleration_setup(self):
-
         info = collect_info()
 
         if not info.gpu.supported:
-
             messagebox.showinfo(
                 "CPU Mode",
-                (
-                    "No compatible GPU was detected.\n\n"
-                    "LocalBot will use CPU-only llama-cpp-python."
-                ),
+                "No compatible GPU was detected.\n\n"
+                "LocalBot will use CPU-only mode.",
                 parent=self,
             )
-
             return
 
-        backend = info.recommended_backend
+        # Launch the friendly wizard
+        def on_finished(result):
+            self.accel_info = collect_info()
+            self._refresh_acceleration_ui()
 
-        missing = required_manual_installers(
-            info
-        )
-
-        if missing:
-
-            text = (
-                f"LocalBot detected:\n\n"
-                f"GPU: {info.gpu.name}\n"
-                f"Backend: {backend.upper()}\n\n"
-                "The following components are missing:\n\n"
-            )
-
-            text += "\n".join(
-                f"• {dep.name}"
-                for dep in missing
-            )
-
-            text += (
-                "\n\nLocalBot will attempt to install "
-                "build dependencies automatically.\n\n"
-                "Vendor GPU drivers/toolkits may open "
-                "their official installer and may require "
-                "administrator permission or a restart."
-            )
-
-            if not messagebox.askyesno(
-                "GPU acceleration setup",
-                text,
-                parent=self,
-            ):
+            if result is None:
+                # User chose CPU only
+                self.status.configure(text="Using CPU-only mode")
                 return
 
-        else:
+            if result.success:
+                self.status.configure(text=result.message)
+                messagebox.showinfo(
+                    "GPU acceleration ready",
+                    f"{result.message}\n\n"
+                    "Please restart LocalBot before loading a model.",
+                    parent=self,
+                )
+            else:
+                self.status.configure(text="GPU build failed – using CPU fallback if available")
 
-            if not messagebox.askyesno(
-                "Build GPU acceleration",
-                (
-                    f"GPU: {info.gpu.name}\n"
-                    f"Backend: {backend.upper()}\n\n"
-                    "LocalBot will compile "
-                    "llama-cpp-python from source and "
-                    "replace the current CPU build "
-                    "only after the accelerated build "
-                    "passes verification.\n\n"
-                    "This can take several minutes."
-                ),
-                parent=self,
-            ):
-                return
+        AccelerationWizard(self, on_finished=on_finished)
 
-        self._set_acceleration_busy(
-            True
-        )
+    def _use_cpu_only(self):
+        if not messagebox.askyesno(
+            "CPU-only mode",
+            "Build and use the CPU-only backend?\n\n"
+            "This disables GPU acceleration.",
+            parent=self,
+        ):
+            return
+
+        self.accel_install_btn.configure(state="disabled", text="Working…")
+        self.accel_cpu_btn.configure(state="disabled")
 
         def worker():
+            from llm.acceleration import build_cpu_fallback
 
-            def progress(message):
+            def progress(msg):
+                self.after(0, lambda m=msg: self.status.configure(text=m[:180]))
 
-                self.after(
-                    0,
-                    lambda m=message:
-                    self._append_build_log(m),
-                )
+            result = build_cpu_fallback(callback=progress)
+            self.after(0, lambda: self._cpu_finished(result))
 
-            result = setup_acceleration(
-                backend=backend,
-                callback=progress,
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _cpu_finished(self, result):
+        self.accel_install_btn.configure(state="normal")
+        self.accel_cpu_btn.configure(state="normal")
+        self.accel_info = collect_info()
+        self._refresh_acceleration_ui()
+
+        if result.success:
+            messagebox.showinfo(
+                "CPU mode",
+                "CPU-only llama-cpp-python was installed and verified.",
+                parent=self,
             )
-
-            self.after(
-                0,
-                lambda r=result:
-                self._acceleration_finished(r),
-            )
-
-        threading.Thread(
-            target=worker,
-            daemon=True,
-        ).start()
-
-    def _set_acceleration_busy(
-        self,
-        busy: bool,
-    ):
-
-        if busy:
-
-            self.accel_install_btn.configure(
-                state="disabled",
-                text="Building…",
-            )
-
-            self.accel_cpu_btn.configure(
-                state="disabled"
-            )
-
-            self.accel_progress.pack(
-                fill="x",
-                pady=(5, 0),
-            )
-
-            self.accel_progress.configure(
-                mode="indeterminate"
-            )
-
-            self.accel_progress.start()
-
-            self.status.configure(
-                text=(
-                    "Preparing native GPU build..."
-                )
-            )
-
-            self._show_build_log()
-
         else:
-
-            try:
-                self.accel_progress.stop()
-            except Exception:
-                pass
-
-            self.accel_progress.pack_forget()
-
-            self.accel_install_btn.configure(
-                state="normal"
-            )
-
-            self.accel_cpu_btn.configure(
-                state="normal"
+            messagebox.showerror(
+                "CPU installation failed",
+                result.message,
+                parent=self,
             )
 
     # ==================================================================

@@ -1,31 +1,12 @@
 # ui/widgets/chat_bubble.py
-"""
-Modern chat bubble – soft, clean, ChatGPT / Claude inspired.
-"""
+"""Modern chat bubble with light/dark awareness."""
 
 import re
 import customtkinter as ctk
 
-# ---------------------------------------------------------------------------
-# Refined light theme
-# ---------------------------------------------------------------------------
-USER_BUBBLE_COLOR = "#0A84FF"          # slightly richer blue
-ASSISTANT_BUBBLE_COLOR = "#F2F2F7"
-BACKGROUND_COLOR = "#FFFFFF"
-
-USER_TEXT_COLOR = "#FFFFFF"
-ASSISTANT_TEXT_COLOR = "#1C1C1E"
-
-CODE_HEADER_COLOR = "#EBEBF0"
-CODE_BODY_COLOR = "#F7F7F9"
-CODE_TEXT_COLOR = "#1C1C1E"
-CODE_LANG_COLOR = "#8E8E93"
-
-AVATAR_USER_COLOR = "#0A84FF"
-AVATAR_ASSISTANT_COLOR = "#E5E5EA"
+from ui.theme import colors
 
 MAX_WRAPLENGTH = 460
-
 _CODE_BLOCK_RE = re.compile(r"```([a-zA-Z0-9_+-]*)\n?(.*?)```", re.DOTALL)
 
 
@@ -33,7 +14,7 @@ def _split_content(text: str):
     pos = 0
     for match in _CODE_BLOCK_RE.finditer(text):
         if match.start() > pos:
-            chunk = text[pos:match.start()]
+            chunk = text[pos : match.start()]
             if chunk.strip():
                 yield ("text", chunk.strip())
         lang = (match.group(1) or "plaintext").strip()
@@ -48,18 +29,23 @@ def _split_content(text: str):
 
 class _Avatar(ctk.CTkFrame):
     def __init__(self, master, role: str, size: int = 28):
-        color = AVATAR_USER_COLOR if role == "user" else AVATAR_ASSISTANT_COLOR
+        c = colors()
+        color = c["user_bubble"] if role == "user" else c["avatar_assistant"]
         super().__init__(
-            master, width=size, height=size,
-            corner_radius=size // 2, fg_color=color,
+            master,
+            width=size,
+            height=size,
+            corner_radius=size // 2,
+            fg_color=color,
         )
         self.grid_propagate(False)
         self.pack_propagate(False)
 
         label_text = "👤" if role == "user" else "✦"
-        text_color = "#FFFFFF" if role == "user" else "#3A3A3C"
+        text_color = "#FFFFFF" if role == "user" else c["text"]
         ctk.CTkLabel(
-            self, text=label_text,
+            self,
+            text=label_text,
             font=ctk.CTkFont(size=12),
             text_color=text_color,
         ).place(relx=0.5, rely=0.5, anchor="center")
@@ -67,34 +53,46 @@ class _Avatar(ctk.CTkFrame):
 
 class _CodeBlock(ctk.CTkFrame):
     def __init__(self, master, language: str, code: str):
-        super().__init__(master, fg_color=CODE_BODY_COLOR, corner_radius=12)
+        c = colors()
+        super().__init__(master, fg_color=c["code_body"], corner_radius=12)
 
         header = ctk.CTkFrame(
-            self, fg_color=CODE_HEADER_COLOR, corner_radius=0, height=28
+            self, fg_color=c["code_header"], corner_radius=0, height=28
         )
         header.pack(fill="x")
         header.pack_propagate(False)
 
         ctk.CTkLabel(
-            header, text=language or "code",
-            text_color=CODE_LANG_COLOR,
+            header,
+            text=language or "code",
+            text_color=c["code_lang"],
             font=ctk.CTkFont(size=11, weight="bold"),
         ).pack(side="left", padx=12)
 
         self.copy_btn = ctk.CTkButton(
-            header, text="Copy", width=52, height=20, corner_radius=6,
-            font=ctk.CTkFont(size=11), fg_color="transparent",
-            hover_color="#D1D1D6", text_color=CODE_LANG_COLOR,
+            header,
+            text="Copy",
+            width=52,
+            height=20,
+            corner_radius=6,
+            font=ctk.CTkFont(size=11),
+            fg_color="transparent",
+            hover_color=c["surface_alt"],
+            text_color=c["code_lang"],
             command=lambda: self._copy(code),
         )
         self.copy_btn.pack(side="right", padx=8, pady=4)
 
         body = ctk.CTkTextbox(
-            self, fg_color=CODE_BODY_COLOR, text_color=CODE_TEXT_COLOR,
+            self,
+            fg_color=c["code_body"],
+            text_color=c["code_text"],
             font=ctk.CTkFont(family="Menlo", size=12),
-            wrap="none", corner_radius=0,
+            wrap="none",
+            corner_radius=0,
             height=self._estimate_height(code),
-            activate_scrollbars=True, border_width=0,
+            activate_scrollbars=True,
+            border_width=0,
         )
         body.pack(fill="x", padx=2, pady=(0, 2))
         body.insert("1.0", code)
@@ -115,8 +113,12 @@ class _CodeBlock(ctk.CTkFrame):
 
 class ChatBubble(ctk.CTkFrame):
     def __init__(
-        self, master, role: str = "assistant", text: str = "",
-        show_avatar: bool = True, **kwargs,
+        self,
+        master,
+        role: str = "assistant",
+        text: str = "",
+        show_avatar: bool = True,
+        **kwargs,
     ):
         super().__init__(master, fg_color="transparent", **kwargs)
 
@@ -127,15 +129,18 @@ class ChatBubble(ctk.CTkFrame):
         self._dot_state = 0
         self._stream_label = None
 
+        c = colors()
         is_user = role == "user"
-        bubble_color = USER_BUBBLE_COLOR if is_user else ASSISTANT_BUBBLE_COLOR
-        text_color = USER_TEXT_COLOR if is_user else ASSISTANT_TEXT_COLOR
+        bubble_color = c["user_bubble"] if is_user else c["assistant_bubble"]
+        text_color = c["user_text"] if is_user else c["assistant_text"]
 
         row = ctk.CTkFrame(self, fg_color="transparent")
         row.pack(fill="x", anchor="e" if is_user else "w")
 
         self.bubble = ctk.CTkFrame(
-            row, fg_color=bubble_color, corner_radius=20,
+            row,
+            fg_color=bubble_color,
+            corner_radius=20,
         )
 
         if is_user:
@@ -161,6 +166,13 @@ class ChatBubble(ctk.CTkFrame):
 
     def _render(self, text: str):
         self._clear_content()
+        # Re-read theme in case mode changed mid-session
+        c = colors()
+        is_user = self.role == "user"
+        self._text_color = c["user_text"] if is_user else c["assistant_text"]
+        bubble_color = c["user_bubble"] if is_user else c["assistant_bubble"]
+        self.bubble.configure(fg_color=bubble_color)
+
         chunks = list(_split_content(text)) or [("text", text)]
         for chunk in chunks:
             if chunk[0] == "text":
@@ -180,6 +192,13 @@ class ChatBubble(ctk.CTkFrame):
                 block.pack(fill="x", pady=(6, 2))
 
     def _render_plain(self, text: str):
+        c = colors()
+        is_user = self.role == "user"
+        self._text_color = c["user_text"] if is_user else c["assistant_text"]
+        self.bubble.configure(
+            fg_color=c["user_bubble"] if is_user else c["assistant_bubble"]
+        )
+
         if self._stream_label is None:
             self._stream_label = ctk.CTkLabel(
                 self._content_holder,
@@ -191,7 +210,10 @@ class ChatBubble(ctk.CTkFrame):
                 wraplength=MAX_WRAPLENGTH,
             )
             self._stream_label.pack(fill="x", anchor="w")
-        self._stream_label.configure(text=text if text else " ")
+        self._stream_label.configure(
+            text=text if text else " ",
+            text_color=self._text_color,
+        )
 
     def update_text(self, text: str, finalize: bool = False):
         self.text = text
@@ -201,9 +223,10 @@ class ChatBubble(ctk.CTkFrame):
             self._render_plain(text)
 
     def start_typing(self):
-        """Small modern three-dot indicator."""
         self.stop_typing()
         self._clear_content()
+        c = colors()
+        self.bubble.configure(fg_color=c["assistant_bubble"])
 
         dots_row = ctk.CTkFrame(self._content_holder, fg_color="transparent")
         dots_row.pack(anchor="w", pady=(1, 0))
@@ -213,7 +236,7 @@ class ChatBubble(ctk.CTkFrame):
             dot = ctk.CTkLabel(
                 dots_row,
                 text="•",
-                text_color="#AEAEB2",
+                text_color=c["text_secondary"],
                 font=ctk.CTkFont(size=10),
                 width=9,
                 height=11,
@@ -226,9 +249,12 @@ class ChatBubble(ctk.CTkFrame):
     def _animate_typing(self):
         if not self._dot_labels:
             return
+        c = colors()
         for i, dot in enumerate(self._dot_labels):
             active = i == self._dot_state
-            dot.configure(text_color="#1C1C1E" if active else "#C7C7CC")
+            dot.configure(
+                text_color=c["text"] if active else c["text_secondary"]
+            )
         self._dot_state = (self._dot_state + 1) % 3
         self._typing_job = self.after(300, self._animate_typing)
 
