@@ -26,5 +26,5 @@ LocalBot is a lightweight desktop application that lets you run GGUF language mo
 - **Persistent conversations** — Stored locally with SQLite
 - **Modern UI** — Clean interface with Dark & Light mode (CustomTkinter)
 - **Cross-platform** — Works on Windows, macOS, and Linux
-- **WebSearch
+- **WebSearch ** - Could be toggle On/Off trough globe icon
 ---
