@@ -42,31 +42,6 @@ Ideal for developers, privacy-conscious users, researchers, and anyone who wants
 
 ---
 
-## Architecture Overview
-LocalBot/
-├── main.py                  # Entry point – hardware detection, model loading, UI launch
-├── assistant/
-│   ├── engine.py            # Core orchestration (streaming, context, search, attachments)
-│   ├── conversation_store.py# SQLite persistence
-│   └── context_provider.py  # Builds system context from search + documents
-├── llm/
-│   ├── llama_runtime.py     # llama-cpp-python wrapper with streaming
-│   ├── hardware.py          # NVIDIA / AMD / Apple / CPU detection + recommendations
-│   ├── hf_models.py         # Hugging Face model download helpers
-│   └── model_catalog.py     # Curated model list
-├── ui/
-│   ├── main_window.py       # Primary chat interface
-│   ├── model_manager.py     # Model download & selection UI
-│   ├── settings.py          # Preferences + app data paths
-│   └── theme.py             # Dark / Light theming
-├── web/
-│   └── search.py            # DuckDuckGo search wrapper (ddgs)
-├── files/
-│   ├── attachments.py       # File attachment manager
-│   └── extractors.py        # PDF / DOCX / XLSX / text extractors
-└── requirements.txt
-
-
 **Design principles**
 - Clear separation of concerns (UI / Engine / Runtime / Storage)
 - Graceful degradation (runs without GPU or even without a model loaded)
