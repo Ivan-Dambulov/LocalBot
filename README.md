@@ -1,3 +1,6 @@
+<img width="1502" height="1037" alt="image" src="https://github.com/user-attachments/assets/909945ca-c836-4b20-896e-3341f369bbf5" />
+
+
 # LocalBot
 
 **Private, offline AI assistant for your desktop.**
